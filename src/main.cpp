@@ -65,11 +65,16 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
   return result;
 }
 
+
+const double degreeFactor(-deg2rad(25));
+
 int main() {
   uWS::Hub h;
 
   // MPC is initialized here!
   MPC mpc;
+
+
 
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -77,7 +82,8 @@ int main() {
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     string sdata = string(data).substr(0, length);
-    cout << sdata << endl;
+//    Disable input cout
+//    cout << sdata << endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -90,7 +96,10 @@ int main() {
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
+//          double psi_u = j[1]["psi_unity"];
+          double steer = j[1]["steering_angle"];
           double v = j[1]["speed"];
+
 
           /*
           * TODO: Calculate steering angle and throttle using MPC.
@@ -101,15 +110,105 @@ int main() {
           double steer_value;
           double throttle_value;
 
+          //first step: convert all coordinates into car coords
+          //Therefore we must use the invers of the rotation matrix R-1
+          //This can either be done by changing the Rotation matrix or
+          //simply by using the negative angle for rotation R-1(alpha) = R(-alpha)
+          //refer to https://de.wikipedia.org/wiki/Drehmatrix e.g.
+          //Furthermore the car coord system starts at 0,0. That means
+          //we'll only identify the difference from px,py to the waypoints
+          //==> dx, dy and start from 0,0 as point
+          double const car_x(0.), car_y(0.);
+          vector<double> car_ptsx(ptsx.size(), 0.);
+          vector<double> car_ptsy(ptsy.size(), 0.);
+          //the car has no heading - spi 0i01s zero
+          //TODO: previously it was zero
+//          double const car_psi(steer*degreeFactor);
+          double const car_psi(0.);
+
+          assert(ptsx.size()==ptsy.size());
+          //use negative psi to the the rotation matrix invers
+          double const sinPsi(sin(-psi));
+          double const cosPsi(cos(-psi));
+          //for further processing, we immediately convert the resulting
+          //points into an eigen-representation
+          Eigen::VectorXd ePtsX(car_ptsx.size()), ePtsY(car_ptsy.size());
+//          vector<double> car_X, car_Y;
+          for(size_t i(0U), _maxI(ptsx.size()); i<_maxI;i++)
+          {
+            //what is the delta from waypoints to car-coord
+            double const dpx(ptsx[i]-px);
+            double const dpy(ptsy[i]-py);
+            //apply rotation matrix
+//            double const resulting_X()
+            car_ptsx[i] = ( car_x + (cosPsi*dpx - sinPsi*dpy));
+            car_ptsy[i] = ( car_y + (sinPsi*dpx + cosPsi*dpy));
+            //eigen represetnation - only consider points in front of the car
+            if((car_ptsx[i] >= 0.))// && (car_ptsy[i] >= 0.))
+            {
+              ePtsX[i] = car_ptsx[i];
+              ePtsY[i] = car_ptsy[i];
+            }
+          }
+
+          //we are searching for a 2nd order polynomial
+          auto coeffs = polyfit(ePtsX, ePtsY, 2);
+          assert(coeffs.size()==3);
+          cout <<" Coeffs "<<coeffs<<endl;
+
+          //calculate the CTE
+          //  = distance of f(x) and y
+          double cte(polyeval(coeffs, car_x) - car_y);
+          cout<<"CTE "<<cte <<" DX "<<ptsx[0]-px << " DY "<<ptsy[0]-py<<endl;
+          vector<double> testo;
+          for(int i(0); i < car_ptsx.size(); i++)
+          {
+            testo.push_back(polyeval(coeffs, car_ptsx[i]));
+          }
+
+          //calculate the orientation error according to chapter 9
+          //take care of 2nd order polynom
+          double const epsi(car_psi - atan(coeffs[1]/*+2*coeffs[2]*px -> we want to know the angle at the car-position - so x is more or less zero, we are only interested in the ypart*/));
+
+
+          //fill stateVector
+          Eigen::VectorXd state(6);
+          state << car_x, car_y, car_psi, v, cte, epsi;
+
+//          cout << "State >> x ,y ,psi ,v : "<<car_x<<", "<<car_y<<", "<<car_psi<<", "<<v<<endl;
+//          cout << "\t cte, epsi :"<<cte<<", "<<epsi<<endl;
+
+          //do solving
+          auto vars = mpc.Solve(state, coeffs);
+
+          //Instead of changing the the equation for the steering input
+          //refer to Project- Tricks, we simply change the steering value
+          double const nominator(deg2rad(25));
+          cout<<"SteeringValue: "<<vars[0]<<endl<<endl;
+          steer_value=-1*vars[0]/nominator;
+//          if(v<10.)
+//          {
+            throttle_value=vars[1];
+//          }
+//          throttle_value=vars[1];
+//          cout<< "SteeringV "<<vars[0]<<" Throttle "<<vars[1]<<endl;
+
+
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
+          //Display the MPC predicted trajectory
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
+
+          for(int i(2); i<vars.size(); i+=2)
+          {
+            mpc_x_vals.push_back(vars[i]);
+            mpc_y_vals.push_back(vars[i+1]);
+          }
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
@@ -121,6 +220,9 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
+          next_x_vals = car_ptsx;
+          next_y_vals = car_ptsy;
+
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
 
@@ -128,8 +230,10 @@ int main() {
           msgJson["next_y"] = next_y_vals;
 
 
+          //LATENCY consider this post https://discussions.udacity.com/t/calibration-for-the-acceleration-and-steering-angle-for-latency-consideration/276413
+
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+//          std::cout << msg << std::endl;
           // Latency
           // The purpose is to mimic real driving conditions where
           // the car does actuate the commands instantly.
