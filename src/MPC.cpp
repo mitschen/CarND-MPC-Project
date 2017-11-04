@@ -37,6 +37,7 @@ size_t epsi_start = cte_start + c_N;
 size_t delta_start = epsi_start + c_N;
 size_t a_start = delta_start + c_N - 1;
 
+//calculate the poly value for a certain x
 AD<double> const polyeval(Eigen::VectorXd coeffs, AD<double> const & x)
 {
   AD<double> result(0.0);
@@ -46,6 +47,7 @@ AD<double> const polyeval(Eigen::VectorXd coeffs, AD<double> const & x)
   return result;
 }
 
+//calculate the value a dereviate for a certain polygon at  x
 AD<double> deriviate(Eigen::VectorXd coeffs, AD<double> const & x)
 {
   AD<double> result(0.);
@@ -73,12 +75,15 @@ class FG_eval {
 
     // The part of the cost based on the reference state.
     for (int t = 0; t < c_N; t++) {
-      //put more weigth into the closer points
+      //put more weigth into certain part of the horizon to avoid thrashing
+      //With these nominator based on the t, we could set the weight focus
+      //to a certain part of the reference-trajectory.
+      //This helps to avoid the thrashing of the steering-angle
       fg[0] += (CppAD::pow(vars[cte_start + t], 2)) / (1.+ pow(double(t-5), 2));
-//      fg[0] += (CppAD::pow(vars[cte_start + t], 2) / (1.+ pow(double(t-2), 2)));
       fg[0] += (CppAD::pow(vars[epsi_start + t], 2)) / (1.+ pow(double(t-5), 2));
+      //reduction of speed-weight - otherwise the solver provides really
+      //weird curvatures
       fg[0] += 0.1 * CppAD::pow(c_ref_v - vars[v_start + t] , 2) ;
-//      fg[0] += fabs(c_ref_v - vars[v_start + t]) ;
     }
 
     // Minimize the use of actuators.
@@ -89,6 +94,8 @@ class FG_eval {
 
     // Minimize the value gap between sequential actuations.
     for (int t = 0; t < c_N - 2; t++) {
+      //Increase the weight of the steering-angle change so that we don't
+      //run into thrashing
       fg[0] += 200.0*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
       fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }

@@ -13,7 +13,6 @@
 using json = nlohmann::json;
 
 
-//const double c_delay = 0.1;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -81,7 +80,6 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
 }
 
 
-const double degreeFactor(-deg2rad(25));
 
 int main() {
   uWS::Hub h;
@@ -124,8 +122,8 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
-          double steer_value;
-          double throttle_value;
+          double steer_value(0.);
+          double throttle_value(0.);
 
           //first step: convert all coordinates into car coords
           //Therefore we must use the invers of the rotation matrix R-1
@@ -137,9 +135,6 @@ int main() {
           //==> dx, dy and start from 0,0 as point
           double const car_x(0.), car_y(0.);
 
-          //TODO: remove car_ptsx, car_ptsy
-          vector<double> car_ptsx(ptsx.size(), 0.);
-          vector<double> car_ptsy(ptsy.size(), 0.);
           //the car has no heading - spi 0i01s zero
           double car_psi(0.);
 
@@ -149,17 +144,15 @@ int main() {
           double const cosPsi(cos(-psi));
           //for further processing, we immediately convert the resulting
           //points into an eigen-representation
-          vector<double> car_X, car_Y;
+          vector<double> car_X(ptsx.size(), 0.), car_Y(ptsy.size(), 0.);
           for(size_t i(0U), _maxI(ptsx.size()); i<_maxI;i++)
           {
             //what is the delta from waypoints to car-coord
             double const dpx(ptsx[i]-px);
             double const dpy(ptsy[i]-py);
             //apply rotation matrix
-            car_ptsx[i] = ( car_x + (cosPsi*dpx - sinPsi*dpy));
-            car_ptsy[i] = ( car_y + (sinPsi*dpx + cosPsi*dpy));
-            car_X.push_back(car_ptsx[i]);
-            car_Y.push_back(car_ptsy[i]);
+            car_X[i] = ( car_x + (cosPsi*dpx - sinPsi*dpy));
+            car_Y[i] = ( car_y + (sinPsi*dpx + cosPsi*dpy));
           }
           //translate into eigen representation
           Eigen::VectorXd ePtsX(car_X.size()), ePtsY(car_X.size());
@@ -169,61 +162,61 @@ int main() {
             ePtsY[i]=car_Y[i];
           }
           const int order_poly(3);
-          //we are searching for a polynomial
+
+          //second step: calculate the polynom which represents the
+          //reference path in car-coordinates
           auto coeffs = polyfit(ePtsX, ePtsY, order_poly);
           assert(coeffs.size()==order_poly+1);
 
 
-          //forecast to future 0.1sec
+          //third step: forecast the position, error,... for future
+          //assuming a delay of 0.1 seconds
           //see/compare the equation from lesson 12-3 and 18-4
           double const yawrate(v * -steer / c_Lf);
           double car_v(v+throttle * c_delay);//see 18-4
 
-//          double const delta_psi(yawrate * c_delay);
-//          double const delta_epsi(delta_psi - atan(deriviate(coeffs, px)));
-//          double const delta_v(throttle * c_delay);
-//          double const delta_cte(sin(epsi) * v * c_delay);
+          //Delta_xyz is the offset on the car_xyz position
           double delta_x = 0.;
           double delta_y = 0.;
+          //if yaw rate is zero we have to consider another equation
+          //Due to the fact that this method calculates the delta under
+          //consideration of time and yawrate, we're using the car_psi which
+          //is zero
           if(pow(yawrate, 2.)>0.00001)
           {
             delta_x = v / yawrate * ( sin(car_psi + yawrate * c_delay) - sin(car_psi) );
             delta_y = v / yawrate * ( cos(car_psi) - cos(car_psi + yawrate * c_delay) );
-//            delta_x = v* cos(-steer) * 0.1;
-//            delta_y = v* sin(-steer) * 0.1;
           }
           else
           {
             delta_x = v * 1.0 * c_delay; // v * cos(0) * delay
             delta_y = 0.; // v * sin(0) * delay
           }
+          //now calculate the car_psi based on yawrate and the delay
           car_psi += yawrate * c_delay;
+
           //calculate the orientation error according to chapter 9
+          //Please note: we are using delat_x/delta_y due to the fact, that
+          //car_x, car_y is zero and we want to predict the future error
           double const epsi(car_psi - atan(deriviate(coeffs, delta_x)));
           double const cte(polyeval(coeffs, delta_x) - delta_y);
 
           //fill stateVector
           Eigen::VectorXd state(6);
-//          state << car_x+delta_x, car_y+delta_y, car_psi+delta_psi, v+delta_v, cte+delta_cte, epsi+delta_epsi;
           state << car_x+delta_x, car_y+delta_y, car_psi, car_v, cte, epsi;
 
+#if 0 //debuggin purpose only
           cout << "State >> x ,y ,psi ,v : "<<car_x+delta_x<<", "<<car_y+delta_y<<", "<<car_psi<<", "<<car_v<<endl;
           cout << "\t cte, epsi :"<<cte<<", "<<epsi<<endl;
-
+#endif
           //do solving
           auto vars = mpc.Solve(state, coeffs);
 
+          double const nominator(deg2rad(25));
           //Instead of changing the the equation for the steering input
           //refer to Project- Tricks, we simply change the steering value
-          double const nominator(deg2rad(25));
-          cout<<"SteeringValue: "<<vars[0]<<endl<<endl;
           steer_value=-1*vars[0]/nominator;
-//          if(v<10.)
-//          {
-            throttle_value=vars[1];
-//          }
-//          throttle_value=vars[1];
-//          cout<< "SteeringV "<<vars[0]<<" Throttle "<<vars[1]<<endl;
+          throttle_value=vars[1];
 
 
           json msgJson;
@@ -236,7 +229,7 @@ int main() {
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
 
-          for(int i(2); i<vars.size(); i+=2)
+          for(auto i(2u); i<vars.size(); i+=2u)
           {
             mpc_x_vals.push_back(vars[i]);
             mpc_y_vals.push_back(vars[i+1]);
