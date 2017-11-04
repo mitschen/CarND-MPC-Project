@@ -79,8 +79,8 @@ class FG_eval {
       //With these nominator based on the t, we could set the weight focus
       //to a certain part of the reference-trajectory.
       //This helps to avoid the thrashing of the steering-angle
-      fg[0] += (CppAD::pow(vars[cte_start + t], 2)) / (1.+ pow(double(t-5), 2));
-      fg[0] += (CppAD::pow(vars[epsi_start + t], 2)) / (1.+ pow(double(t-5), 2));
+      fg[0] += 0.5*(CppAD::pow(vars[cte_start + t], 2)) / (1.+ pow(double(t-5), 2));
+      fg[0] += 10.0*(CppAD::pow(vars[epsi_start + t], 2)) / (1.+ pow(double(t-5), 2));
       //reduction of speed-weight - otherwise the solver provides really
       //weird curvatures
       fg[0] += 0.1 * CppAD::pow(c_ref_v - vars[v_start + t] , 2) ;
@@ -88,7 +88,7 @@ class FG_eval {
 
     // Minimize the use of actuators.
     for (int t = 0; t < c_N - 1; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t], 2);
+      fg[0] += 500.*CppAD::pow(vars[delta_start + t], 2);
       fg[0] += CppAD::pow(vars[a_start + t], 2);
     }
 
@@ -96,7 +96,7 @@ class FG_eval {
     for (int t = 0; t < c_N - 2; t++) {
       //Increase the weight of the steering-angle change so that we don't
       //run into thrashing
-      fg[0] += 200.0*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 800.0*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
       fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
@@ -146,8 +146,12 @@ class FG_eval {
       // The idea here is to constraint this value to be 0.
       //
       // Recall the equations for the model:
+      // yawrate is zero:
       // x_[t+1] = x[t] + v[t] * cos(psi[t]) * c_dt
       // y_[t+1] = y[t] + v[t] * sin(psi[t]) * c_dt
+      // yawrate != zero
+      // x_[t+1] = x_[t] + v[t] / c_Lf * delta[t] * (sin(psi[t] + v[t] / c_Lf * delta[t] * c_dt) - sin(psi[t]))
+      // y_[t+1] = y_[t] + v[t] / c_Lf * delta[t] * (-cos(psi[t] + v[t] / c_Lf * delta[t] * c_dt) + cos(psi[t]))
       // psi_[t+1] = psi[t] + v[t] / c_Lf * delta[t] * c_dt
       // v_[t+1] = v[t] + a[t] * c_dt
       // cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * c_dt
