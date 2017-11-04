@@ -23,7 +23,7 @@ const double Lf = 2.67;
 
 // Both the reference cross track and orientation errors are 0.
 // The reference velocity is set to x mph.
-double ref_v = 25;
+double ref_v = 40;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
@@ -54,8 +54,9 @@ class FG_eval {
     // The part of the cost based on the reference state.
     for (int t = 0; t < N; t++) {
       //put more weigth into the closer points
-      fg[0] += 10.0*(CppAD::pow(vars[cte_start + t], 2) / pow(2., t));
-      fg[0] += 10.0*(CppAD::pow(vars[epsi_start + t], 2) / pow(2., t));
+      fg[0] += (CppAD::pow(vars[cte_start + t], 2)); // (1.+ pow(double(t-5), 2)));
+//      fg[0] += (CppAD::pow(vars[cte_start + t], 2) / (1.+ pow(double(t-2), 2)));
+      fg[0] += (CppAD::pow(vars[epsi_start + t], 2) / 1.+ pow(double(t-5), 2));
       fg[0] += 0.01 * CppAD::pow(ref_v - vars[v_start + t] , 2) ;
 //      fg[0] += fabs(ref_v - vars[v_start + t]) ;
     }
@@ -110,8 +111,8 @@ class FG_eval {
       // Only consider the actuation at time t.
       AD<double> delta0 = vars[delta_start + t - 1];
       AD<double> a0 = vars[a_start + t - 1];
-
-      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x0*x0;
+      AD<double> x_2(x0*x0);
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x_2 ;
       //TODO: double check the meaning of psides0
       AD<double> psides0 = CppAD::atan(coeffs[1]);
 

@@ -96,6 +96,7 @@ int main() {
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
+          double throttle = j[1]["throttle"];
 //          double psi_u = j[1]["psi_unity"];
           double steer = j[1]["steering_angle"];
           double v = j[1]["speed"];
@@ -132,25 +133,35 @@ int main() {
           double const cosPsi(cos(-psi));
           //for further processing, we immediately convert the resulting
           //points into an eigen-representation
-          Eigen::VectorXd ePtsX(car_ptsx.size()), ePtsY(car_ptsy.size());
-//          vector<double> car_X, car_Y;
+//          Eigen::VectorXd ePtsX(car_ptsx.size()), ePtsY(car_ptsy.size());
+          vector<double> car_X, car_Y;
           for(size_t i(0U), _maxI(ptsx.size()); i<_maxI;i++)
           {
             //what is the delta from waypoints to car-coord
             double const dpx(ptsx[i]-px);
             double const dpy(ptsy[i]-py);
             //apply rotation matrix
-//            double const resulting_X()
             car_ptsx[i] = ( car_x + (cosPsi*dpx - sinPsi*dpy));
             car_ptsy[i] = ( car_y + (sinPsi*dpx + cosPsi*dpy));
-            //eigen represetnation - only consider points in front of the car
-            if((car_ptsx[i] >= 0.))// && (car_ptsy[i] >= 0.))
+            if(/* (car_ptsx[i]>=0.) &&*/ (car_ptsx[i]<80.))
             {
-              ePtsX[i] = car_ptsx[i];
-              ePtsY[i] = car_ptsy[i];
+              car_X.push_back(car_ptsx[i]);
+              car_Y.push_back(car_ptsy[i]);
             }
+            //eigen represetnation - only consider points in front of the car
+//            if((car_ptsx[i] >= 0.))// && (car_ptsy[i] >= 0.))
+//            {
+//              ePtsX[i] = car_ptsx[i];
+//              ePtsY[i] = car_ptsy[i];
+//            }
           }
-
+          Eigen::VectorXd ePtsX(car_X.size()), ePtsY(car_X.size());
+          for(int i(0), _maxI(car_X.size()); i < _maxI; i++)
+          {
+            ePtsX[i]=car_X[i];
+            ePtsY[i]=car_Y[i];
+          }
+          cout<<"SIZE "<<ePtsX.size()<<endl;
           //we are searching for a 2nd order polynomial
           auto coeffs = polyfit(ePtsX, ePtsY, 2);
           assert(coeffs.size()==3);
@@ -158,22 +169,30 @@ int main() {
 
           //calculate the CTE
           //  = distance of f(x) and y
-          double cte(polyeval(coeffs, car_x) - car_y);
-          cout<<"CTE "<<cte <<" DX "<<ptsx[0]-px << " DY "<<ptsy[0]-py<<endl;
-          vector<double> testo;
-          for(int i(0); i < car_ptsx.size(); i++)
-          {
-            testo.push_back(polyeval(coeffs, car_ptsx[i]));
-          }
+//          for(int i(0); i < car_ptsx.size(); i++)
+//          {
+//            testo.push_back(polyeval(coeffs, car_ptsx[i]));
+//          }
 
           //calculate the orientation error according to chapter 9
           //take care of 2nd order polynom
           double const epsi(car_psi - atan(coeffs[1]/*+2*coeffs[2]*px -> we want to know the angle at the car-position - so x is more or less zero, we are only interested in the ypart*/));
+          double const cte(polyeval(coeffs, car_x) - car_y);
+
+          double const angSpeed(v/2.67); //angular velocity
+
+          double const delta_psi(v / 2.67 * -steer * 0.1); //see 18-4
+          double const delta_epsi(delta_psi - atan(coeffs[1]));
+          double const delta_v(throttle * 0.1);
+          double const delta_cte(sin(epsi) * v * 0.1);
+          double const delta_x = v * cos(-steer) * 0.1;
+          double const delta_y = v* sin(-steer) * 0.1;
+          cout<<"CTE "<<cte <<" DeltaCTE "<<delta_cte<<" DX "<<ePtsX[0] << " DY "<<ePtsY[0]<<endl;
 
 
           //fill stateVector
           Eigen::VectorXd state(6);
-          state << car_x, car_y, car_psi, v, cte, epsi;
+          state << car_x+delta_x, car_y+delta_y, car_psi+delta_psi, v+delta_v, cte+delta_cte, epsi+delta_epsi;
 
 //          cout << "State >> x ,y ,psi ,v : "<<car_x<<", "<<car_y<<", "<<car_psi<<", "<<v<<endl;
 //          cout << "\t cte, epsi :"<<cte<<", "<<epsi<<endl;
@@ -220,8 +239,8 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          next_x_vals = car_ptsx;
-          next_y_vals = car_ptsy;
+          next_x_vals = car_X;//car_ptsx;
+          next_y_vals = car_Y;//car_ptsy;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
