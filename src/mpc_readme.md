@@ -1,7 +1,7 @@
 # CarND-MPC Control Project
 
 
-###Overview
+### Overview
 This project is about the implementation of a MPC (model predicted controller) which interacts with the Udacity car simulator. The MPC should provide steering angle and acceleration based on the state information provided by the simulator. Goal of the MPC is to make sure that the car stays on track.
 
 ### Implementation
@@ -91,7 +91,7 @@ The final state vector that is used as input for the MPC is therefore
 ``state << delta_x, delta_y, car_psi, car_v, cte, epsi``
 
 
-####MPC processing
+#### MPC processing
 The MPC is more or less following the suggestion given in Chapter 19. The MPC tries to optimize the error-value under consideration of a certain cost-function and a certain time span.
 For the timespan I choose ``c_N=20`` steps with a cycle time of ``c_dt=0.1`` seconds - see ``MPC.h``. That means in other words the MPC tries to minimize the overall cost value for a timeperiod of 2 seconds in future. Please note: the process latency is already normalized in previous step.
 
@@ -137,7 +137,7 @@ fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
 I was facing a heavy thrashing of the steering angle with the original weights, so i've increase the weight of the steering angle diffs by 200 to achieve a smoother behaviour.
 
 
-###loopback to simulator
+### loopback to simulator
 As a result of the MPC we are getting the steering value as well as the throttle values, combined with the predicted x,y coordinates of the car. The steering value is normalized by the constant 25 degree to gurantee a steering value between [-1, 1]. Throttle is forwarded unchanged and the trajectory is drawn as a green line in the simulator. 
 
 
