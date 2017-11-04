@@ -6,8 +6,8 @@
 using CppAD::AD;
 
 // TODO: Set the timestep length and duration
-size_t const N = 25; //following suggestion of 19/9
-double const dt = 0.2; //following suggestion of 19/9
+//size_t const c_N = 25; //following suggestion of 19/9
+//double const c_dt = 0.2; //following suggestion of 19/9
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -19,23 +19,43 @@ double const dt = 0.2; //following suggestion of 19/9
 // presented in the classroom matched the previous radius.
 //
 // This is the length from front to CoG that has a similar radius.
-const double Lf = 2.67;
-
-// Both the reference cross track and orientation errors are 0.
-// The reference velocity is set to x mph.
-double ref_v = 40;
+//const double c_Lf = 2.67;
+//
+//// Both the reference cross track and orientation errors are 0.
+//// The reference velocity is set to x mph.
+//const double c_ref_v = 40;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
 // when one variable starts and another ends to make our lifes easier.
 size_t x_start = 0;
-size_t y_start = x_start + N;
-size_t psi_start = y_start + N;
-size_t v_start = psi_start + N;
-size_t cte_start = v_start + N;
-size_t epsi_start = cte_start + N;
-size_t delta_start = epsi_start + N;
-size_t a_start = delta_start + N - 1;
+size_t y_start = x_start + c_N;
+size_t psi_start = y_start + c_N;
+size_t v_start = psi_start + c_N;
+size_t cte_start = v_start + c_N;
+size_t epsi_start = cte_start + c_N;
+size_t delta_start = epsi_start + c_N;
+size_t a_start = delta_start + c_N - 1;
+
+AD<double> const polyeval(Eigen::VectorXd coeffs, AD<double> const & x)
+{
+  AD<double> result(0.0);
+  for (int i = 0; i < coeffs.size(); i++) {
+    result += coeffs[i] * CppAD::pow(x, i);
+  }
+  return result;
+}
+
+AD<double> deriviate(Eigen::VectorXd coeffs, AD<double> const & x)
+{
+  AD<double> result(0.);
+  for(int i(1); i<coeffs.size(); i++)
+  {
+    result += coeffs[i] * CppAD::pow(x, (i-1)) * i;
+  }
+  return result;
+}
+
 
 class FG_eval {
  public:
@@ -52,24 +72,24 @@ class FG_eval {
     fg[0] = 0;
 
     // The part of the cost based on the reference state.
-    for (int t = 0; t < N; t++) {
+    for (int t = 0; t < c_N; t++) {
       //put more weigth into the closer points
-      fg[0] += (CppAD::pow(vars[cte_start + t], 2)); // (1.+ pow(double(t-5), 2)));
+      fg[0] += (CppAD::pow(vars[cte_start + t], 2)) / (1.+ pow(double(t-5), 2));
 //      fg[0] += (CppAD::pow(vars[cte_start + t], 2) / (1.+ pow(double(t-2), 2)));
-      fg[0] += (CppAD::pow(vars[epsi_start + t], 2) / 1.+ pow(double(t-5), 2));
-      fg[0] += 0.01 * CppAD::pow(ref_v - vars[v_start + t] , 2) ;
-//      fg[0] += fabs(ref_v - vars[v_start + t]) ;
+      fg[0] += (CppAD::pow(vars[epsi_start + t], 2)) / (1.+ pow(double(t-5), 2));
+      fg[0] += 0.1 * CppAD::pow(c_ref_v - vars[v_start + t] , 2) ;
+//      fg[0] += fabs(c_ref_v - vars[v_start + t]) ;
     }
 
     // Minimize the use of actuators.
-    for (int t = 0; t < N - 1; t++) {
+    for (int t = 0; t < c_N - 1; t++) {
       fg[0] += CppAD::pow(vars[delta_start + t], 2);
       fg[0] += CppAD::pow(vars[a_start + t], 2);
     }
 
     // Minimize the value gap between sequential actuations.
-    for (int t = 0; t < N - 2; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+    for (int t = 0; t < c_N - 2; t++) {
+      fg[0] += 200.0*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
       fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
@@ -91,7 +111,7 @@ class FG_eval {
     fg[1 + epsi_start] = vars[epsi_start];
 
     // The rest of the constraints
-    for (int t = 1; t < N; t++) {
+    for (int t = 1; t < c_N; t++) {
       // The state at time t+1 .
       AD<double> x1 = vars[x_start + t];
       AD<double> y1 = vars[y_start + t];
@@ -111,30 +131,47 @@ class FG_eval {
       // Only consider the actuation at time t.
       AD<double> delta0 = vars[delta_start + t - 1];
       AD<double> a0 = vars[a_start + t - 1];
-      AD<double> x_2(x0*x0);
-      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x_2 ;
-      //TODO: double check the meaning of psides0
-      AD<double> psides0 = CppAD::atan(coeffs[1]);
+      AD<double> f0 = polyeval(coeffs, x0);
+      AD<double> psides0 = CppAD::atan(deriviate(coeffs, x0));
+      AD<double> yawrate0 = v0 * delta0 / c_Lf;
 
       // Here's `x` to get you started.
       // The idea here is to constraint this value to be 0.
       //
       // Recall the equations for the model:
-      // x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
-      // y_[t+1] = y[t] + v[t] * sin(psi[t]) * dt
-      // psi_[t+1] = psi[t] + v[t] / Lf * delta[t] * dt
-      // v_[t+1] = v[t] + a[t] * dt
-      // cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt
-      // epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
-      fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
-      fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+      // x_[t+1] = x[t] + v[t] * cos(psi[t]) * c_dt
+      // y_[t+1] = y[t] + v[t] * sin(psi[t]) * c_dt
+      // psi_[t+1] = psi[t] + v[t] / c_Lf * delta[t] * c_dt
+      // v_[t+1] = v[t] + a[t] * c_dt
+      // cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * c_dt
+      // epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / c_Lf * c_dt
 
-      fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
-      fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
+      // consider equations from 12-3 for the case that yawrate isn't zero
+      // Yawrate is given as v0 * delta0 / c_Lf - comparing the equation
+      // given by the quizzles with the equation from 12-3
+      if(CppAD::pow(yawrate0,2)<0.00001)
+      {
+        //yaw rate is zero
+        fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * c_dt);
+        fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * c_dt);
+      }
+      else
+      {
+        fg[1 + x_start + t] =
+          x1 - (x0 + v0 / yawrate0
+             * (CppAD::sin(psi0 + yawrate0 * c_dt) - CppAD::sin(psi0))) ;
+        fg[1 + y_start + t] =
+          y1 - (y0 + v0 / yawrate0
+              *  (CppAD::cos(psi0) - CppAD::cos(psi0 + yawrate0 * c_dt)) );
+      }
+
+
+      fg[1 + psi_start + t] = psi1 - (psi0 + yawrate0 * c_dt);
+      fg[1 + v_start + t] = v1 - (v0 + a0 * c_dt);
       fg[1 + cte_start + t] =
-          cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+          cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * c_dt));
       fg[1 + epsi_start + t] =
-          epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+          epsi1 - ((psi0 - psides0) + yawrate0 * c_dt);
     }
   }
 };
@@ -158,10 +195,10 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   double epsi = state[5];
 
   // number of independent variables
-  // N timesteps == N - 1 actuations
-  size_t n_vars = N * 6 + (N - 1) * 2;
+  // c_N timesteps == c_N - 1 actuations
+  size_t n_vars = c_N * 6 + (c_N - 1) * 2;
   // Number of constraints
-  size_t n_constraints = N * 6;
+  size_t n_constraints = c_N * 6;
 
   // Initial value of the independent variables.
   // Should be 0 except for the initial values.
@@ -278,11 +315,5 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     result.push_back(solution.x[i+x_start]); //add x
     result.push_back(solution.x[i+y_start]); //add y
   }
-//  result.push_back
-//
-//  return {solution.x[x_start + 1],   solution.x[y_start + 1],
-//          solution.x[psi_start + 1], solution.x[v_start + 1],
-//          solution.x[cte_start + 1], solution.x[epsi_start + 1],
-//          solution.x[delta_start], solution.x[a_start]};
   return result;
 }

@@ -12,6 +12,9 @@
 // for convenience
 using json = nlohmann::json;
 
+
+//const double c_delay = 0.1;
+
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
@@ -32,11 +35,23 @@ string hasData(string s) {
   return "";
 }
 
+
 // Evaluate a polynomial.
-double polyeval(Eigen::VectorXd coeffs, double x) {
-  double result = 0.0;
+double polyeval(Eigen::VectorXd coeffs, double x)
+{
+  double result(0.0);
   for (int i = 0; i < coeffs.size(); i++) {
     result += coeffs[i] * pow(x, i);
+  }
+  return result;
+}
+// Evaluate a derivate of the polynomial.
+double deriviate(Eigen::VectorXd coeffs, double x)
+{
+  double result(0.);
+  for(int i(1); i<coeffs.size(); i++)
+  {
+    result += coeffs[i] * pow(x, (i-1)) * i;
   }
   return result;
 }
@@ -97,10 +112,11 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double throttle = j[1]["throttle"];
-//          double psi_u = j[1]["psi_unity"];
+          double psi_u = j[1]["psi_unity"];
           double steer = j[1]["steering_angle"];
           double v = j[1]["speed"];
-
+          //no used variable
+          (void) psi_u;
 
           /*
           * TODO: Calculate steering angle and throttle using MPC.
@@ -120,12 +136,12 @@ int main() {
           //we'll only identify the difference from px,py to the waypoints
           //==> dx, dy and start from 0,0 as point
           double const car_x(0.), car_y(0.);
+
+          //TODO: remove car_ptsx, car_ptsy
           vector<double> car_ptsx(ptsx.size(), 0.);
           vector<double> car_ptsy(ptsy.size(), 0.);
           //the car has no heading - spi 0i01s zero
-          //TODO: previously it was zero
-//          double const car_psi(steer*degreeFactor);
-          double const car_psi(0.);
+          double car_psi(0.);
 
           assert(ptsx.size()==ptsy.size());
           //use negative psi to the the rotation matrix invers
@@ -133,7 +149,6 @@ int main() {
           double const cosPsi(cos(-psi));
           //for further processing, we immediately convert the resulting
           //points into an eigen-representation
-//          Eigen::VectorXd ePtsX(car_ptsx.size()), ePtsY(car_ptsy.size());
           vector<double> car_X, car_Y;
           for(size_t i(0U), _maxI(ptsx.size()); i<_maxI;i++)
           {
@@ -143,59 +158,57 @@ int main() {
             //apply rotation matrix
             car_ptsx[i] = ( car_x + (cosPsi*dpx - sinPsi*dpy));
             car_ptsy[i] = ( car_y + (sinPsi*dpx + cosPsi*dpy));
-            if(/* (car_ptsx[i]>=0.) &&*/ (car_ptsx[i]<80.))
-            {
-              car_X.push_back(car_ptsx[i]);
-              car_Y.push_back(car_ptsy[i]);
-            }
-            //eigen represetnation - only consider points in front of the car
-//            if((car_ptsx[i] >= 0.))// && (car_ptsy[i] >= 0.))
-//            {
-//              ePtsX[i] = car_ptsx[i];
-//              ePtsY[i] = car_ptsy[i];
-//            }
+            car_X.push_back(car_ptsx[i]);
+            car_Y.push_back(car_ptsy[i]);
           }
+          //translate into eigen representation
           Eigen::VectorXd ePtsX(car_X.size()), ePtsY(car_X.size());
           for(int i(0), _maxI(car_X.size()); i < _maxI; i++)
           {
             ePtsX[i]=car_X[i];
             ePtsY[i]=car_Y[i];
           }
-          cout<<"SIZE "<<ePtsX.size()<<endl;
-          //we are searching for a 2nd order polynomial
-          auto coeffs = polyfit(ePtsX, ePtsY, 2);
-          assert(coeffs.size()==3);
-          cout <<" Coeffs "<<coeffs<<endl;
+          const int order_poly(3);
+          //we are searching for a polynomial
+          auto coeffs = polyfit(ePtsX, ePtsY, order_poly);
+          assert(coeffs.size()==order_poly+1);
 
-          //calculate the CTE
-          //  = distance of f(x) and y
-//          for(int i(0); i < car_ptsx.size(); i++)
-//          {
-//            testo.push_back(polyeval(coeffs, car_ptsx[i]));
-//          }
 
+          //forecast to future 0.1sec
+          //see/compare the equation from lesson 12-3 and 18-4
+          double const yawrate(v * -steer / c_Lf);
+          double car_v(v+throttle * c_delay);//see 18-4
+
+//          double const delta_psi(yawrate * c_delay);
+//          double const delta_epsi(delta_psi - atan(deriviate(coeffs, px)));
+//          double const delta_v(throttle * c_delay);
+//          double const delta_cte(sin(epsi) * v * c_delay);
+          double delta_x = 0.;
+          double delta_y = 0.;
+          if(pow(yawrate, 2.)>0.00001)
+          {
+            delta_x = v / yawrate * ( sin(car_psi + yawrate * c_delay) - sin(car_psi) );
+            delta_y = v / yawrate * ( cos(car_psi) - cos(car_psi + yawrate * c_delay) );
+//            delta_x = v* cos(-steer) * 0.1;
+//            delta_y = v* sin(-steer) * 0.1;
+          }
+          else
+          {
+            delta_x = v * 1.0 * c_delay; // v * cos(0) * delay
+            delta_y = 0.; // v * sin(0) * delay
+          }
+          car_psi += yawrate * c_delay;
           //calculate the orientation error according to chapter 9
-          //take care of 2nd order polynom
-          double const epsi(car_psi - atan(coeffs[1]/*+2*coeffs[2]*px -> we want to know the angle at the car-position - so x is more or less zero, we are only interested in the ypart*/));
-          double const cte(polyeval(coeffs, car_x) - car_y);
-
-          double const angSpeed(v/2.67); //angular velocity
-
-          double const delta_psi(v / 2.67 * -steer * 0.1); //see 18-4
-          double const delta_epsi(delta_psi - atan(coeffs[1]));
-          double const delta_v(throttle * 0.1);
-          double const delta_cte(sin(epsi) * v * 0.1);
-          double const delta_x = v * cos(-steer) * 0.1;
-          double const delta_y = v* sin(-steer) * 0.1;
-          cout<<"CTE "<<cte <<" DeltaCTE "<<delta_cte<<" DX "<<ePtsX[0] << " DY "<<ePtsY[0]<<endl;
-
+          double const epsi(car_psi - atan(deriviate(coeffs, delta_x)));
+          double const cte(polyeval(coeffs, delta_x) - delta_y);
 
           //fill stateVector
           Eigen::VectorXd state(6);
-          state << car_x+delta_x, car_y+delta_y, car_psi+delta_psi, v+delta_v, cte+delta_cte, epsi+delta_epsi;
+//          state << car_x+delta_x, car_y+delta_y, car_psi+delta_psi, v+delta_v, cte+delta_cte, epsi+delta_epsi;
+          state << car_x+delta_x, car_y+delta_y, car_psi, car_v, cte, epsi;
 
-//          cout << "State >> x ,y ,psi ,v : "<<car_x<<", "<<car_y<<", "<<car_psi<<", "<<v<<endl;
-//          cout << "\t cte, epsi :"<<cte<<", "<<epsi<<endl;
+          cout << "State >> x ,y ,psi ,v : "<<car_x+delta_x<<", "<<car_y+delta_y<<", "<<car_psi<<", "<<car_v<<endl;
+          cout << "\t cte, epsi :"<<cte<<", "<<epsi<<endl;
 
           //do solving
           auto vars = mpc.Solve(state, coeffs);
@@ -262,7 +275,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds((int)(c_delay * 1000)));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
